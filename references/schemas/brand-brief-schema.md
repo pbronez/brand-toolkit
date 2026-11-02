@@ -29,6 +29,7 @@ stage: seed            # Current stage in brand lifecycle
 created: null          # ISO date: 2026-03-18
 last_updated: null     # ISO date: auto-updated by skills
 last_audit: null       # ISO date: last time brand-audit ran
+last_synced: null      # Set by brand-sync only: { date: ISO date, hash: sha256 of the brief at the last sync }
 
 # ===== BUSINESS CONTEXT =====
 business_type: null    # Informs framework adaptations
@@ -210,7 +211,7 @@ All skills follow this chain:
 | brand-voice | identity, business_type, positioning, messaging | voice (all fields), stage, last_updated |
 | brand-visual-identity | identity, business_type, positioning, messaging, voice | visual (all fields), stage, last_updated |
 | brand-competitor-scan | identity, positioning | intelligence.competitors, intelligence.last_scan |
-| brand-sync | Everything | vault_path, last_updated |
+| brand-sync | Everything | vault_path, last_synced, last_updated (on merge) |
 
 ---
 

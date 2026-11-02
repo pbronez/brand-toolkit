@@ -1,0 +1,131 @@
+---
+# Model of the brand-sync protocol (commands/brand-sync.md):
+# one brand-brief.md lives in the project directory, a copy lives in the vault,
+# and either copy can be edited between syncs. Skills stamp `last_updated` with
+# an ISO date (day granularity, see references/schemas/brand-brief-schema.md).
+#
+# MODE = "base"  the documented design: `last_synced.hash` records what both copies
+#                held at the last sync, so sync can tell "only one side changed"
+#                from "both changed" (a conflict). Passes.
+# MODE = "doc"   the earlier design, deciding only from `last_updated`. Fails
+#                NoSyncNeededMeansInSync (same-day edits) and NoSilentLoss
+#                (newer copy overwrites the other side's edits).
+#                Check it with: fizz --preinit-hook "MODE='doc'" specs/brand-sync.fizz
+deadlock_detection: false
+options:
+  max_actions: 8
+---
+
+MODE = "base"
+MAX_EDITS = 2
+MAX_DAYS = 1
+
+action Init:
+    day = 0
+    next_edit = 0
+    # Each copy is the set of edit ids it contains, plus its last_updated date.
+    proj_edits = set()
+    proj_updated = 0
+    vault_edits = set()
+    vault_updated = 0
+    # What both copies held right after the last sync (used only in "base" mode).
+    base_edits = set()
+    # Edits the user chose to throw away while resolving a conflict.
+    discarded = set()
+    last_decision = None
+
+atomic action NewDay:
+    require day < MAX_DAYS
+    day = day + 1
+
+# A skill (or the user) changes the project copy and stamps last_updated.
+atomic action EditProject:
+    require next_edit < MAX_EDITS
+    proj_edits.add(next_edit)
+    proj_updated = day
+    next_edit = next_edit + 1
+    last_decision = None
+
+# A skill run against vault_path (or the user, in Obsidian) changes the vault copy.
+atomic action EditVault:
+    require next_edit < MAX_EDITS
+    vault_edits.add(next_edit)
+    vault_updated = day
+    next_edit = next_edit + 1
+    last_decision = None
+
+# The user runs /brand-toolkit:brand-sync.
+atomic fair action Sync:
+    if MODE == "doc":
+        if proj_updated > vault_updated:
+            vault_edits = set(proj_edits)
+            vault_updated = proj_updated
+            decision = "push"
+        elif vault_updated > proj_updated:
+            proj_edits = set(vault_edits)
+            proj_updated = vault_updated
+            decision = "pull"
+        else:
+            decision = "none"
+    else:
+        proj_changed = proj_edits != base_edits
+        vault_changed = vault_edits != base_edits
+        if proj_changed and vault_changed:
+            # Conflict: show both versions; the user keeps one or merges.
+            oneof:
+                atomic:
+                    for e in vault_edits:
+                        if e not in proj_edits:
+                            discarded.add(e)
+                    vault_edits = set(proj_edits)
+                    vault_updated = proj_updated
+                    decision = "push"
+                atomic:
+                    for e in proj_edits:
+                        if e not in vault_edits:
+                            discarded.add(e)
+                    proj_edits = set(vault_edits)
+                    proj_updated = vault_updated
+                    decision = "pull"
+                atomic:
+                    merged = set(proj_edits)
+                    for e in vault_edits:
+                        merged.add(e)
+                    proj_edits = set(merged)
+                    vault_edits = set(merged)
+                    proj_updated = day
+                    vault_updated = day
+                    decision = "merge"
+        elif proj_changed:
+            vault_edits = set(proj_edits)
+            vault_updated = proj_updated
+            decision = "push"
+        elif vault_changed:
+            proj_edits = set(vault_edits)
+            proj_updated = vault_updated
+            decision = "pull"
+        else:
+            decision = "none"
+        base_edits = set(proj_edits)
+    last_decision = decision
+
+# No edit disappears unless the user explicitly chose to discard it.
+always assertion NoSilentLoss:
+    for e in range(next_edit):
+        if e not in proj_edits and e not in vault_edits and e not in discarded:
+            return False
+    return True
+
+# When sync reports "no sync needed", the two copies really are the same.
+always assertion NoSyncNeededMeansInSync:
+    if last_decision == "none":
+        return proj_edits == vault_edits
+    return True
+
+# Once editing stops and the user keeps syncing, the copies end up identical.
+eventually always assertion Converges:
+    return proj_edits == vault_edits
+
+# Sanity: both copies can be edited before a sync (the case sync must handle).
+exists assertion BothSidesEdited:
+    return len(proj_edits - base_edits) > 0 and len(vault_edits - base_edits) > 0

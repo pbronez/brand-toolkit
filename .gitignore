@@ -12,3 +12,10 @@ Desktop.ini
 # Environment
 .env
 .env.local
+
+# Claude Code worktrees
+.claude/worktrees/
+
+# FizzBee checker output
+specs/out/
+specs/*.json
